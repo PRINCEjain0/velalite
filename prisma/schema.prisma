@@ -1,0 +1,57 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Thread {
+  id              String        @id @default(cuid())
+  email_thread_id String
+  organizer_email String
+  guest_email     String
+  status          ThreadStatus  @default(NEW_THREAD)
+  created_at      DateTime      @default(now())
+
+  proposed_slots  ProposedSlot[]
+  meetings        Meeting[]
+}
+
+model ProposedSlot {
+  id         String      @id @default(cuid())
+  thread     Thread      @relation(fields: [thread_id], references: [id])
+  thread_id  String
+  start_time DateTime
+  end_time   DateTime
+  status     SlotStatus  @default(PENDING)
+}
+
+model Meeting {
+  id                String        @id @default(cuid())
+  thread            Thread        @relation(fields: [thread_id], references: [id])
+  thread_id         String
+  calendar_event_id String?
+  scheduled_time    DateTime
+  status            MeetingStatus @default(SCHEDULED)
+}
+
+enum ThreadStatus {
+  NEW_THREAD
+  SLOTS_PROPOSED
+  AWAITING_CONFIRMATION
+  MEETING_SCHEDULED
+}
+
+enum SlotStatus {
+  PENDING
+  CONFIRMED
+  DECLINED
+}
+
+enum MeetingStatus {
+  SCHEDULED
+  CANCELLED
+}
+
