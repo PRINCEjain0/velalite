@@ -1,11 +1,22 @@
 import { prisma } from '@/lib/prisma';
 import type { ParsedEmail } from '@/types/email';
+import { classifyEmailIntent } from '@/lib/ai';
 
-// Very simple placeholder: always treat as a new scheduling thread
-// and create three fixed 1-hour slots starting tomorrow at 10:00.
+
 export async function processIncomingEmail(email: ParsedEmail) {
   // Use threadId (In-Reply-To / References) if present, otherwise fall back to messageId
   const emailThreadId = email.threadId ?? email.messageId;
+
+  const intent = await classifyEmailIntent(email.bodyText);
+
+  if (intent === 'confirm_slot') {
+    // TODO: handle confirmation / booking flow.
+    // For now, just return existing thread if any.
+    const existingForConfirm = await prisma.thread.findFirst({
+      where: { email_thread_id: emailThreadId },
+    });
+    return existingForConfirm ?? null;
+  }
 
   const existing = await prisma.thread.findFirst({
     where: { email_thread_id: emailThreadId },
