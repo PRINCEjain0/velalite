@@ -1,7 +1,7 @@
 import type { ParsedEmail } from '@/types/email';
 
 // Minimal shape of the SendGrid Inbound Parse payload we care about.
-type InboundPayload = {
+export type InboundPayload = {
   from: string;
   to: string;
   cc?: string;
