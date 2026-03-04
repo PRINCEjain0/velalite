@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { parseInboundEmail } from '@/lib/email';
+import { processIncomingEmail } from '@/lib/agent';
 
 export async function POST(req: NextRequest) {
   try {
@@ -14,10 +15,9 @@ export async function POST(req: NextRequest) {
 
     const parsed = parseInboundEmail(raw);
 
-    // For now, just log and return OK.
-    console.log('Inbound email (parsed):', parsed);
+    const thread = await processIncomingEmail(parsed);
 
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, threadId: thread.id });
   } catch (error) {
     console.error('Error handling inbound email webhook', error);
     return NextResponse.json(
