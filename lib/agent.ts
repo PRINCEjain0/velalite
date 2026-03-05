@@ -32,19 +32,53 @@ function parseRequestedSlotNumber(body: string): number | null {
   return n;
 }
 
-function wantsDifferentSlots(body: string): boolean {
-  const lower = body.toLowerCase();
-  return (
-    lower.includes('different slot') ||
-    lower.includes('another slot') ||
-    lower.includes('other slot') ||
-    lower.includes('different time')
-  );
+type AgentAction = 'confirm' | 'cancel' | 'schedule' | 'other';
+
+function latestReplyOnly(body: string): string {
+  const normalized = body.replace(/\r\n/g, '\n');
+  const separators = [
+    '\nOn ',
+    '\nFrom:',
+    '\n-----Original Message-----',
+    '\n>',
+  ];
+  let cut = normalized.length;
+  for (const sep of separators) {
+    const idx = normalized.indexOf(sep);
+    if (idx !== -1 && idx < cut) cut = idx;
+  }
+  return normalized.slice(0, cut).trim();
 }
 
-function wantsCancellation(body: string): boolean {
+function deriveAction(body: string, intent: string, hasSlotNumber: boolean): AgentAction {
   const lower = body.toLowerCase();
-  return lower.includes('cancel') || lower.includes('reschedule') || lower.includes('call off');
+
+  // Prioritize explicit scheduling words over cancel to avoid matching quoted history.
+  if (
+    lower.includes('reschedule') ||
+    lower.includes('schedule') ||
+    lower.includes('different slot') ||
+    lower.includes('another slot') ||
+    lower.includes('new slot')
+  ) {
+    return 'schedule';
+  }
+
+  if (lower.includes('cancel') || lower.includes('call off')) return 'cancel';
+  if (
+    hasSlotNumber ||
+    lower.includes('confirm') ||
+    lower.includes('book') ||
+    lower.includes('choose') ||
+    lower.includes('pick')
+  ) {
+    return 'confirm';
+  }
+
+  if (intent === 'decline') return 'cancel';
+  if (intent === 'confirm_slot') return 'confirm';
+  if (intent === 'scheduling_request' || intent === 'interview_interest') return 'schedule';
+  return 'other';
 }
 
 export async function processIncomingEmail(email: ParsedEmail) {
@@ -55,15 +89,16 @@ export async function processIncomingEmail(email: ParsedEmail) {
 
   const mainThreadId = threadIds[0] ?? email.messageId;
 
-  const intent = await classifyEmailIntent(email.bodyText);
-  const requestedSlotNumber = parseRequestedSlotNumber(email.bodyText);
-  const isExplicitConfirm = requestedSlotNumber !== null;
+  const latestBody = latestReplyOnly(email.bodyText);
+  const intent = await classifyEmailIntent(latestBody);
+  const requestedSlotNumber = parseRequestedSlotNumber(latestBody);
+  const action = deriveAction(latestBody, intent, requestedSlotNumber !== null);
   const fromEmail = extractEmail(email.from);
   const toEmails = email.to.map(extractEmail);
   const ccEmails = email.cc.map(extractEmail);
   const participantEmails = Array.from(new Set([fromEmail, ...toEmails, ...ccEmails]));
 
-  if (intent === 'decline' || wantsCancellation(email.bodyText)) {
+  if (action === 'cancel') {
     let existingForCancel = await prisma.thread.findFirst({
       where: {
         email_thread_id: { in: [...threadIds, email.messageId] } as any,
@@ -81,6 +116,13 @@ export async function processIncomingEmail(email: ParsedEmail) {
     }
 
     if (!existingForCancel) {
+      await sendEmail({
+        original: email,
+        to: [fromEmail],
+        cc: [],
+        subject: `Re: ${email.subject}`,
+        body: 'I could not find a scheduled interview to cancel in this thread.',
+      });
       return null;
     }
 
@@ -125,7 +167,7 @@ export async function processIncomingEmail(email: ParsedEmail) {
     return existing;
   }
 
-  if (intent === 'confirm_slot' || isExplicitConfirm) {
+  if (action === 'confirm') {
     let existingForConfirm = await prisma.thread.findFirst({
       where: {
         email_thread_id: { in: [...threadIds, email.messageId] } as any,
@@ -152,6 +194,15 @@ export async function processIncomingEmail(email: ParsedEmail) {
       });
     }
     if (!existingForConfirm) {
+      await sendEmail({
+        original: email,
+        to: [fromEmail],
+        cc: [],
+        subject: `Re: ${email.subject}`,
+        body:
+          'I could not find an active slot proposal in this thread.\n\n' +
+          'Reply with "schedule" and I will send fresh options.',
+      });
       return null;
     }
     const existing = existingForConfirm as Thread;
@@ -255,7 +306,11 @@ export async function processIncomingEmail(email: ParsedEmail) {
   });
 
   if (existingByThreadId) {
-    if (existingByThreadId.status === 'SLOTS_PROPOSED' && wantsDifferentSlots(email.bodyText)) {
+    if (
+      (existingByThreadId.status === 'AWAITING_CONFIRMATION' ||
+        existingByThreadId.status === 'SLOTS_PROPOSED') &&
+      action === 'schedule'
+    ) {
       const freshSlots = await getAvailableSlots(existingByThreadId.organizer_email, { days: 5 });
       const freshSlotData = freshSlots.map((slot) => ({
         thread_id: existingByThreadId.id,
@@ -264,6 +319,10 @@ export async function processIncomingEmail(email: ParsedEmail) {
         status: 'PENDING' as const,
       }));
       await prisma.proposedSlot.createMany({ data: freshSlotData });
+      await prisma.thread.update({
+        where: { id: existingByThreadId.id },
+        data: { status: 'SLOTS_PROPOSED' },
+      });
       const slotsText = freshSlotData
         .map(
           (slot, index) =>
@@ -277,9 +336,23 @@ export async function processIncomingEmail(email: ParsedEmail) {
         cc: [existingByThreadId.organizer_email],
         subject: `Re: ${email.subject}`,
         body:
-          'No problem — here are 3 different 1-hour options:\n\n' +
+          'Great — here are new available 1-hour slots:\n\n' +
           `${slotsText}\n\n` +
-          'Reply with "confirm [slot number]" (e.g., "confirm 2").',
+          'Reply with "confirm [slot number]" (e.g., "confirm 1").',
+      });
+      return existingByThreadId;
+    }
+    if (action === 'other') {
+      await sendEmail({
+        original: email,
+        to: [existingByThreadId.guest_email],
+        cc: [existingByThreadId.organizer_email],
+        subject: `Re: ${email.subject}`,
+        body:
+          'I can help with:\n' +
+          '- "schedule" or "reschedule" for new slots\n' +
+          '- "confirm 1" to book a slot\n' +
+          '- "cancel" to cancel the interview',
       });
     }
     return existingByThreadId;
