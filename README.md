@@ -1,49 +1,143 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# VelaLite
 
-## VelaLite – Google Calendar
+AI interview scheduling over email.
 
-To use **real** calendar availability and create real events:
+VelaLite acts as an AI assistant inside email threads and automatically coordinates interview scheduling between recruiters and candidates. It reads email conversations, checks calendar availability, proposes interview slots, and schedules meetings once a time is confirmed.
 
-1. **Google Cloud**: Create a project, enable [Calendar API](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com), create a **Service Account**, download its JSON key.
-2. **Share the recruiter's calendar** with the service account email (e.g. `xxx@project.iam.gserviceaccount.com`): Google Calendar → Settings → Share with specific people → add that email with “See all event details”.
-3. **Env** (one of):
-   - `GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json`
-   - or `GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}` (full JSON string).
-4. Use the **recruiter's primary calendar ID** in the flow (we use their email as `calendarId` for primary calendar). When the first email has `to=recruiter@gmail.com`, we call freebusy and create events on `recruiter@gmail.com`.
+All coordination happens directly inside the email thread.
 
-Without these env vars, the app falls back to placeholder slots and a log-only “event” on confirm.
+## Recruiter Quick Start
 
-## Getting Started
 
-First, run the development server:
+### 1. CC the VelaLite agent once
+
+When a candidate first contacts the recruiter, the recruiter replies and adds the VelaLite agent in CC.
+
+Example email:
+
+- **From:** `recruiter@company.com`
+- **To:** `candidate@gmail.com`
+- **CC:** `velalite.agent@gmail.com`
+
+After this first reply, the agent joins the email thread and continues handling scheduling.  
+The recruiter does not need to manually manage scheduling messages after that.
+
+The agent will communicate with the candidate and keep the recruiter in CC.
+
+### 2. Share your Google Calendar with VelaLite
+
+VelaLite needs access to the recruiter's calendar to check availability and create interview events.
+
+1. Open Google Calendar.
+2. Open the settings for your main calendar.
+3. Find **Share with specific people**.
+4. Add the service account email:
+
+```
+velalite-calendar@velalite.iam.gserviceaccount.com
+```
+
+5. Permission must be:
+
+**Make changes to events**
+
+Once shared, the agent can read availability and schedule meetings automatically.
+
+### 3. How the agent understands candidate replies
+
+Candidates do not need to use strict commands.
+
+VelaLite uses AI to understand natural language replies such as:
+
+- "Wednesday works for me"
+- "Can we do another slot?"
+- "Let's reschedule for tomorrow"
+- "Please cancel this meeting"
+
+The system detects intent from email text and performs the correct action automatically.
+
+### 4. End to end behavior
+
+1. Candidate sends an email to the recruiter.
+2. Recruiter replies once and CCs the VelaLite agent.
+3. The agent checks the recruiter's calendar and proposes available interview slots.
+4. The candidate replies with their preferred time.
+5. The agent creates or updates the calendar event and sends confirmation to both participants.
+
+All communication continues within the same email thread.
+
+## Scheduling Flow
+
+![VelaLite Scheduling Flow](docs/workflow.png)
+
+## Known Limitation
+
+When using personal Gmail accounts with service accounts, Google may restrict sending attendee invitations automatically.
+
+In this case VelaLite still creates or cancels the event on the recruiter's calendar and sends email confirmations to participants.
+
+## Local Setup 
+
+Use this section only if you want to run VelaLite locally.
+
+### Install dependencies
+
+```bash
+npm install
+```
+
+### Database setup
+
+Set the database connection string in `.env`.
+
+```env
+DATABASE_URL=...
+```
+
+Run the Prisma migration.
+
+```bash
+npx prisma migrate dev
+```
+
+### Environment variables
+
+Create a `.env` file and provide:
+
+```env
+DATABASE_URL=...
+
+ASSISTANT_EMAIL=your.agent@gmail.com
+
+GMAIL_CLIENT_ID=...
+GMAIL_CLIENT_SECRET=...
+GMAIL_REDIRECT_URI=https://developers.google.com/oauthplayground
+GMAIL_REFRESH_TOKEN=...
+
+GROQ_API_KEY=...
+
+GOOGLE_APPLICATION_CREDENTIALS=keys/your-service-account-key.json
+```
+
+### Run the application
+
+Start the development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Start the Gmail poller:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm run gmail:poll
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Optional custom polling interval:
 
-## Learn More
+```bash
+GMAIL_POLL_INTERVAL_MS=60000 npm run gmail:poll
+```
 
-To learn more about Next.js, take a look at the following resources:
+Developed by **Prince Jain**
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
