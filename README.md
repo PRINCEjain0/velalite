@@ -139,5 +139,21 @@ Optional custom polling interval:
 GMAIL_POLL_INTERVAL_MS=60000 npm run gmail:poll
 ```
 
+## MCP Calendar Tools (Advanced)
+
+Optional MCP interface for external AI tool access.
+
+If you use an MCP-compatible client (like Claude Desktop or modern AI IDEs), you can talk to your calendar through VelaLite as tools:
+
+- **check_availability**: returns upcoming free interview slots on a recruiter calendar.
+- **schedule_interview**: creates an interview event on the recruiter calendar and invites the candidate.
+- **cancel_interview**: cancels a previously scheduled interview event.
+
+To run the MCP server locally:
+
+```bash
+npm run mcp:server
+```
+
 Developed by **Prince Jain**
 

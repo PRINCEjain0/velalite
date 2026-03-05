@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "eslint",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev"
+    "prisma:migrate": "prisma migrate dev",
+    "mcp:server": "tsx mcp-server.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
@@ -20,6 +21,7 @@
     "react-dom": "19.2.3"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
@@ -28,6 +30,8 @@
     "eslint-config-next": "16.1.6",
     "prisma": "^7.4.2",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "tsx": "^4.21.0",
+    "typescript": "^5",
+    "zod": "^4.3.6"
   }
 }
