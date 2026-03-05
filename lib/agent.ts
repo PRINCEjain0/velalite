@@ -158,7 +158,7 @@ export async function processIncomingEmail(email: ParsedEmail) {
       original: email,
       to: [existing.guest_email],
       cc: [existing.organizer_email],
-      subject: `Interview cancelled – ${email.subject}`,
+      subject: 'Interview cancelled',
       body:
         'Your interview has been cancelled.\n\n' +
         'If you would like to continue, reply with "schedule" and I will share new slots.',
@@ -289,7 +289,7 @@ export async function processIncomingEmail(email: ParsedEmail) {
       original: email,
       to: [existing.guest_email],
       cc: [existing.organizer_email],
-      subject: `Interview confirmed – ${formatSlot(selected.start_time)}`,
+      subject: `Interview confirmed - ${formatSlot(selected.start_time)}`,
       body:
         'Your interview has been scheduled.\n\n' +
         `Date: ${formatSlot(selected.start_time)}\n` +
@@ -311,7 +311,17 @@ export async function processIncomingEmail(email: ParsedEmail) {
         existingByThreadId.status === 'SLOTS_PROPOSED') &&
       action === 'schedule'
     ) {
-      const freshSlots = await getAvailableSlots(existingByThreadId.organizer_email, { days: 5 });
+      const existingSlots = await prisma.proposedSlot.findMany({
+        where: { thread_id: existingByThreadId.id },
+        orderBy: { start_time: 'asc' },
+      });
+      const excludeStarts = existingSlots.map((slot) => slot.start_time.toISOString());
+
+      const freshSlots = await getAvailableSlots(existingByThreadId.organizer_email, {
+        days: 5,
+        excludeStarts,
+      });
+
       const freshSlotData = freshSlots.map((slot) => ({
         thread_id: existingByThreadId.id,
         start_time: new Date(slot.start),

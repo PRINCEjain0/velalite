@@ -74,9 +74,20 @@ export interface CalendarSlot {
   end: string;
 }
 
+export interface GetAvailableSlotsOptions {
+  days?: number;
+  slotDurationHours?: number;
+  /**
+   * Optional list of ISO start times that should be excluded
+   * from the returned slots (used when a candidate asks for
+   * different / new options so we do not repeat the same ones).
+   */
+  excludeStarts?: string[];
+}
+
 export async function getAvailableSlots(
   recruiterCalendarId: string,
-  options: { days?: number; slotDurationHours?: number } = {}
+  options: GetAvailableSlotsOptions = {}
 ): Promise<CalendarSlot[]> {
   const calendar = getCalendarClient();
   if (!calendar) {
@@ -84,10 +95,14 @@ export async function getAvailableSlots(
     return getPlaceholderSlots();
   }
 
-  const { days = 5, slotDurationHours = 1 } = options;
-  const now = new Date();
-  const timeMin = new Date(now);
-  timeMin.setMinutes(0, 0, 0);
+  const { days = 5, slotDurationHours = 1, excludeStarts = [] } = options;
+
+  // Start from the beginning of the next day so we do not propose
+  // "latest today" slots and instead always look at upcoming days.
+  const today = new Date();
+  const timeMin = new Date(today);
+  timeMin.setDate(timeMin.getDate() + 1);
+  timeMin.setHours(9, 0, 0, 0);
   const timeMax = new Date(timeMin);
   timeMax.setDate(timeMax.getDate() + days);
 
@@ -112,21 +127,29 @@ export async function getAvailableSlots(
       busySample: busy.slice(0, 5).map((b) => ({ start: b.start, end: b.end })),
     });
     const freeSlots: CalendarSlot[] = [];
+    const excludeMs = new Set(
+      excludeStarts.map((iso) => {
+        try {
+          return new Date(iso).getTime();
+        } catch {
+          return NaN;
+        }
+      }),
+    );
     const slotMs = slotDurationHours * 60 * 60 * 1000;
     let cursor = new Date(timeMin);
-    if (cursor <= now) {
-      cursor = new Date(now);
-      cursor.setMinutes(Math.ceil(cursor.getMinutes() / 30) * 30, 0, 0);
-    }
 
     while (freeSlots.length < 3 && cursor.getTime() + slotMs <= timeMax.getTime()) {
       const slotStart = new Date(cursor);
       const slotEnd = new Date(cursor.getTime() + slotMs);
-      const isFree = !busy.some((b) => {
-        const bStart = new Date(b.start!).getTime();
-        const bEnd = new Date(b.end!).getTime();
-        return slotStart.getTime() < bEnd && slotEnd.getTime() > bStart;
-      });
+      const startMs = slotStart.getTime();
+      const isFree =
+        !busy.some((b) => {
+          const bStart = new Date(b.start!).getTime();
+          const bEnd = new Date(b.end!).getTime();
+          return startMs < bEnd && slotEnd.getTime() > bStart;
+        }) && !excludeMs.has(startMs);
+
       if (isFree) {
         freeSlots.push({
           start: slotStart.toISOString(),
