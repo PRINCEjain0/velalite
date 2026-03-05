@@ -54,11 +54,12 @@ export function parseInboundEmail(payload: InboundPayload): ParsedEmail {
       ? messageIdRaw
       : `<local-${randomUUID()}@velalite.local>`;
 
-  const threadIdRaw =
-    payload['In-Reply-To'] ||
-    headers['In-Reply-To'] ||
-    headers['References'] ||
-    '';
+  const inReplyTo = payload['In-Reply-To'] || headers['In-Reply-To'] || '';
+  const references = payload['References'] || headers['References'] || '';
+  const threadIdRaw = [inReplyTo, references]
+    .join(' ')
+    .trim()
+    .replace(/\s+/g, ' ');
 
   const threadId = threadIdRaw.trim().length > 0 ? threadIdRaw : undefined;
 

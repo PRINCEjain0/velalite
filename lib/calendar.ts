@@ -1,5 +1,6 @@
 import {
   createCalendarEvent as createGoogleEvent,
+  cancelCalendarEvent as cancelGoogleEvent,
 } from '@/lib/google-calendar';
 
 type CreateEventParamsLegacy = {
@@ -19,5 +20,17 @@ export async function createCalendarEvent(params: CreateEventParamsLegacy): Prom
     start: params.start,
     end: params.end,
     summary: params.subject,
+  });
+}
+
+type CancelEventParamsLegacy = {
+  recruiterEmail: string;
+  calendarEventId: string;
+};
+
+export async function cancelCalendarEvent(params: CancelEventParamsLegacy): Promise<void> {
+  await cancelGoogleEvent({
+    calendarId: params.recruiterEmail,
+    calendarEventId: params.calendarEventId,
   });
 }

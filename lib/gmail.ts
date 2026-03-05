@@ -34,8 +34,12 @@ function decodeBody(data?: string | null): string {
 function toParsedEmail(message: any): ParsedEmail {
   const headers = message.payload?.headers ?? [];
   const messageId = getHeader(headers, 'Message-Id') ?? '';
-  const threadIdHeader =
-    getHeader(headers, 'In-Reply-To') ?? getHeader(headers, 'References') ?? undefined;
+  const inReplyTo = getHeader(headers, 'In-Reply-To') ?? '';
+  const references = getHeader(headers, 'References') ?? '';
+  const threadIdHeader = [inReplyTo, references]
+    .join(' ')
+    .trim()
+    .replace(/\s+/g, ' ') || undefined;
   const subject = getHeader(headers, 'Subject') ?? '';
   const from = getHeader(headers, 'From') ?? '';
   const to = parseAddressList(getHeader(headers, 'To'));

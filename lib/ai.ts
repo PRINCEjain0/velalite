@@ -1,42 +1,45 @@
 import type { EmailIntent } from '@/types/email';
 
-const GROK_API_KEY = process.env.GROK_API_KEY;
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+
+function keywordFallback(body: string): EmailIntent {
+  const lower = body.toLowerCase();
+  if (
+    lower.includes('confirm') ||
+    lower.includes('works') ||
+    lower.includes('book') ||
+    lower.includes('slot') ||
+    lower.includes('1st') ||
+    lower.includes('first')
+  ) {
+    return 'confirm_slot';
+  }
+  if (lower.includes('schedule') || lower.includes('availability')) {
+    return 'scheduling_request';
+  }
+  if (lower.includes('interview') || lower.includes('interested')) {
+    return 'interview_interest';
+  }
+  if (lower.includes('cancel') || lower.includes('decline')) {
+    return 'decline';
+  }
+  return 'other';
+}
 
 export async function classifyEmailIntent(body: string): Promise<EmailIntent> {
-  if (!GROK_API_KEY) {
-    const lower = body.toLowerCase();
-    if (
-      lower.includes('confirm') ||
-      lower.includes('works') ||
-      lower.includes('book') ||
-      lower.includes('slot') ||
-      lower.includes('1st') ||
-      lower.includes('first')
-    ) {
-      return 'confirm_slot';
-    }
-    if (lower.includes('schedule') || lower.includes('availability')) {
-      return 'scheduling_request';
-    }
-    if (lower.includes('interview') || lower.includes('interested')) {
-      return 'interview_interest';
-    }
-    if (lower.includes('cancel') || lower.includes('decline')) {
-      return 'decline';
-    }
-    return 'other';
+  if (!GROQ_API_KEY) {
+    return keywordFallback(body);
   }
 
   try {
-    
-    const response = await fetch('https://api.x.ai/v1/chat/completions', {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${GROK_API_KEY}`,
+        Authorization: `Bearer ${GROQ_API_KEY}`,
       },
       body: JSON.stringify({
-        model: 'grok-2-latest',
+        model: 'llama-3.1-8b-instant',
         messages: [
           {
             role: 'system',
@@ -56,13 +59,12 @@ export async function classifyEmailIntent(body: string): Promise<EmailIntent> {
     });
 
     if (!response.ok) {
-      console.error('Grok API error', await response.text());
-      return 'other';
+      console.error('Groq API error', await response.text());
+      return keywordFallback(body);
     }
 
     const json: any = await response.json();
     const content: string =
-      json.choices?.[0]?.message?.content?.[0]?.text ??
       json.choices?.[0]?.message?.content ??
       '';
 
@@ -77,10 +79,10 @@ export async function classifyEmailIntent(body: string): Promise<EmailIntent> {
     ];
 
     const match = allowed.find((value) => normalized.includes(value));
-    return match ?? 'other';
+    return match ?? keywordFallback(body);
   } catch (error) {
-    console.error('Error calling Grok API', error);
-    return 'other';
+    console.error('Error calling Groq API', error);
+    return keywordFallback(body);
   }
 }
 

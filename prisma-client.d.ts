@@ -44,6 +44,11 @@ declare module '@prisma/client' {
     };
     meeting: {
       create(args: { data: Record<string, unknown> }): Promise<Meeting>;
+      findFirst(args: {
+        where: Record<string, unknown>;
+        orderBy?: Record<string, 'asc' | 'desc'>;
+      }): Promise<Meeting | null>;
+      update(args: { where: { id: string }; data: Record<string, unknown> }): Promise<Meeting>;
     };
   }
 }

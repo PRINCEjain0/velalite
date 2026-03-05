@@ -1,8 +1,8 @@
 import { prisma } from '@/lib/prisma';
 import type { ParsedEmail } from '@/types/email';
-import type { Thread, ProposedSlot } from '@prisma/client';
+import type { Thread, ProposedSlot, Meeting } from '@prisma/client';
 import { classifyEmailIntent } from '@/lib/ai';
-import { createCalendarEvent } from '@/lib/calendar';
+import { cancelCalendarEvent, createCalendarEvent } from '@/lib/calendar';
 import { getAvailableSlots } from '@/lib/google-calendar';
 import { sendEmail } from '@/lib/mailer';
 
@@ -42,6 +42,11 @@ function wantsDifferentSlots(body: string): boolean {
   );
 }
 
+function wantsCancellation(body: string): boolean {
+  const lower = body.toLowerCase();
+  return lower.includes('cancel') || lower.includes('reschedule') || lower.includes('call off');
+}
+
 export async function processIncomingEmail(email: ParsedEmail) {
   const threadIds = (email.threadId ?? '')
     .split(/\s+/)
@@ -57,6 +62,68 @@ export async function processIncomingEmail(email: ParsedEmail) {
   const toEmails = email.to.map(extractEmail);
   const ccEmails = email.cc.map(extractEmail);
   const participantEmails = Array.from(new Set([fromEmail, ...toEmails, ...ccEmails]));
+
+  if (intent === 'decline' || wantsCancellation(email.bodyText)) {
+    let existingForCancel = await prisma.thread.findFirst({
+      where: {
+        email_thread_id: { in: [...threadIds, email.messageId] } as any,
+      },
+    });
+    if (!existingForCancel) {
+      existingForCancel = await prisma.thread.findFirst({
+        where: {
+          organizer_email: { in: participantEmails } as any,
+          guest_email: { in: participantEmails } as any,
+          status: 'MEETING_SCHEDULED',
+        },
+        orderBy: { created_at: 'desc' },
+      });
+    }
+
+    if (!existingForCancel) {
+      return null;
+    }
+
+    const existing = existingForCancel as Thread;
+    const scheduledMeeting = (await prisma.meeting.findFirst({
+      where: {
+        thread_id: existing.id,
+        status: 'SCHEDULED',
+      },
+      orderBy: { scheduled_time: 'desc' },
+    })) as Meeting | null;
+
+    if (scheduledMeeting) {
+      if (scheduledMeeting.calendar_event_id) {
+        await cancelCalendarEvent({
+          recruiterEmail: existing.organizer_email,
+          calendarEventId: scheduledMeeting.calendar_event_id,
+        });
+      }
+
+      await prisma.meeting.update({
+        where: { id: scheduledMeeting.id },
+        data: { status: 'CANCELLED' },
+      });
+    }
+
+    await prisma.thread.update({
+      where: { id: existing.id },
+      data: { status: 'AWAITING_CONFIRMATION' },
+    });
+
+    await sendEmail({
+      original: email,
+      to: [existing.guest_email],
+      cc: [existing.organizer_email],
+      subject: `Interview cancelled – ${email.subject}`,
+      body:
+        'Your interview has been cancelled.\n\n' +
+        'If you would like to continue, reply with "schedule" and I will share new slots.',
+    });
+
+    return existing;
+  }
 
   if (intent === 'confirm_slot' || isExplicitConfirm) {
     let existingForConfirm = await prisma.thread.findFirst({
@@ -76,6 +143,15 @@ export async function processIncomingEmail(email: ParsedEmail) {
       });
     }
     if (!existingForConfirm) {
+      existingForConfirm = await prisma.thread.findFirst({
+        where: {
+          status: 'SLOTS_PROPOSED',
+          guest_email: fromEmail,
+        },
+        orderBy: { created_at: 'desc' },
+      });
+    }
+    if (!existingForConfirm) {
       return null;
     }
     const existing = existingForConfirm as Thread;
@@ -87,6 +163,41 @@ export async function processIncomingEmail(email: ParsedEmail) {
       },
       orderBy: { start_time: 'asc' },
     });
+
+    if (pendingSlots.length === 0) {
+      await sendEmail({
+        original: email,
+        to: [existing.guest_email],
+        cc: [existing.organizer_email],
+        subject: `Re: ${email.subject}`,
+        body:
+          'There are no pending slots to confirm in this thread.\n\n' +
+          'If you want new options, reply with "different slot".',
+      });
+      return existing;
+    }
+
+    if (requestedSlotNumber && requestedSlotNumber > pendingSlots.length) {
+      const pendingText = pendingSlots
+        .map(
+          (slot, index) =>
+            `${index + 1}. ${formatSlot(slot.start_time)} – ${formatSlot(slot.end_time)}`,
+        )
+        .join('\n');
+
+      await sendEmail({
+        original: email,
+        to: [existing.guest_email],
+        cc: [existing.organizer_email],
+        subject: `Re: ${email.subject}`,
+        body:
+          `I couldn't find slot ${requestedSlotNumber}.\n\n` +
+          'Please choose one of the currently available slots:\n' +
+          `${pendingText}\n\n` +
+          'Reply with "confirm [slot number]" (e.g., "confirm 1").',
+      });
+      return existing;
+    }
 
     const selected =
       (requestedSlotNumber ? pendingSlots[requestedSlotNumber - 1] : pendingSlots[0]) as

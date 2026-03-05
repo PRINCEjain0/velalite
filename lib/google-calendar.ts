@@ -170,6 +170,11 @@ export interface CreateEventParams {
   summary: string;
 }
 
+export interface CancelEventParams {
+  calendarId: string;
+  calendarEventId: string;
+}
+
 export async function createCalendarEvent(
   params: CreateEventParams
 ): Promise<{ calendarEventId: string }> {
@@ -239,6 +244,29 @@ export async function createCalendarEvent(
     } else {
       console.error('Google Calendar create event error', err);
     }
+    throw err;
+  }
+}
+
+export async function cancelCalendarEvent(params: CancelEventParams): Promise<void> {
+  const calendar = getCalendarClient();
+  if (!calendar) {
+    console.log('cancelCalendarEvent (no credentials)', params);
+    return;
+  }
+
+  try {
+    await calendar.events.delete({
+      calendarId: params.calendarId,
+      eventId: params.calendarEventId,
+      sendUpdates: 'all',
+    });
+  } catch (err: any) {
+    const status: number | undefined = err?.code ?? err?.status;
+    if (status === 404) {
+      return;
+    }
+    console.error('Google Calendar cancel event error', err);
     throw err;
   }
 }
