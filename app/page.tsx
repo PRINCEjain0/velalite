@@ -2,7 +2,6 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-white text-gray-900">
       <div className="max-w-3xl mx-auto px-6 py-20">
-
         <h1 className="text-4xl font-semibold tracking-tight">
           VelaLite
         </h1>
@@ -17,8 +16,21 @@ export default function Home() {
           slots, and schedules the meeting once the candidate confirms.
         </p>
 
-        <div className="mt-16 space-y-12">
+        <section className="mt-8 rounded-xl border border-gray-200 bg-gray-50 px-5 py-4 text-sm text-gray-700">
+          <p className="font-medium">Before you start</p>
+          <p className="mt-2">
+            In your recruiter Google Calendar, share your main calendar with:
+          </p>
+          <p className="mt-2 font-mono text-xs">
+            velalite-calendar@velalite.iam.gserviceaccount.com
+          </p>
+          <p className="mt-2">
+            Give it <span className="font-semibold">“Make changes to events”</span> access so VelaLite can
+            see your availability and create interview events.
+          </p>
+        </section>
 
+        <div className="mt-12 space-y-12">
           <section>
             <h2 className="text-xl font-medium">
               1. Reply to the candidate and CC the agent
@@ -30,12 +42,13 @@ export default function Home() {
             </p>
 
             <div className="mt-4 bg-gray-100 rounded-lg p-4 text-sm font-mono">
-              From: recruiter@company.com <br/>
-              To: candidate@gmail.com <br/>
+              From: recruiter@company.com
+              <br />
+              To: candidate@gmail.com
+              <br />
               CC: velalite.agent@gmail.com
             </div>
           </section>
-
 
           <section>
             <h2 className="text-xl font-medium">
@@ -49,7 +62,6 @@ export default function Home() {
             </p>
           </section>
 
-
           <section>
             <h2 className="text-xl font-medium">
               3. Candidate replies with a preferred time
@@ -62,7 +74,6 @@ export default function Home() {
             </p>
           </section>
 
-
           <section>
             <h2 className="text-xl font-medium">
               4. Interview gets scheduled automatically
@@ -73,14 +84,12 @@ export default function Home() {
               event and sends confirmation to everyone in the thread.
             </p>
           </section>
-
         </div>
 
         <div className="mt-20 border-t pt-8 text-sm text-gray-500">
           Built as a prototype demonstrating an AI scheduling assistant for
           interview coordination.
         </div>
-
       </div>
     </main>
   );
