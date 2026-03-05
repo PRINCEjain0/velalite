@@ -1,5 +1,18 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## VelaLite – Google Calendar
+
+To use **real** calendar availability and create real events:
+
+1. **Google Cloud**: Create a project, enable [Calendar API](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com), create a **Service Account**, download its JSON key.
+2. **Share the recruiter's calendar** with the service account email (e.g. `xxx@project.iam.gserviceaccount.com`): Google Calendar → Settings → Share with specific people → add that email with “See all event details”.
+3. **Env** (one of):
+   - `GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json`
+   - or `GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}` (full JSON string).
+4. Use the **recruiter's primary calendar ID** in the flow (we use their email as `calendarId` for primary calendar). When the first email has `to=recruiter@gmail.com`, we call freebusy and create events on `recruiter@gmail.com`.
+
+Without these env vars, the app falls back to placeholder slots and a log-only “event” on confirm.
+
 ## Getting Started
 
 First, run the development server:

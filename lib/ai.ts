@@ -5,7 +5,14 @@ const GROK_API_KEY = process.env.GROK_API_KEY;
 export async function classifyEmailIntent(body: string): Promise<EmailIntent> {
   if (!GROK_API_KEY) {
     const lower = body.toLowerCase();
-    if (lower.includes('confirm') || lower.includes('works')) {
+    if (
+      lower.includes('confirm') ||
+      lower.includes('works') ||
+      lower.includes('book') ||
+      lower.includes('slot') ||
+      lower.includes('1st') ||
+      lower.includes('first')
+    ) {
       return 'confirm_slot';
     }
     if (lower.includes('schedule') || lower.includes('availability')) {

@@ -1,42 +1,104 @@
 import { prisma } from '@/lib/prisma';
 import type { ParsedEmail } from '@/types/email';
+import type { Thread, ProposedSlot } from '@prisma/client';
 import { classifyEmailIntent } from '@/lib/ai';
 import { createCalendarEvent } from '@/lib/calendar';
+import { getAvailableSlots } from '@/lib/google-calendar';
 import { sendEmail } from '@/lib/mailer';
 
+const ASSISTANT_EMAIL = (process.env.ASSISTANT_EMAIL ?? '').toLowerCase();
+
+function extractEmail(address: string): string {
+  const match = address.match(/<([^>]+)>/);
+  return (match ? match[1] : address).trim().toLowerCase();
+}
+
+function formatSlot(date: Date): string {
+  return date.toLocaleString('en-US', {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
+
+function parseRequestedSlotNumber(body: string): number | null {
+  const m = body.match(/\b(?:confirm|book|choose|pick)\s*(?:slot\s*)?(\d+)\b/i) ?? body.match(/\bslot\s*(\d+)\b/i);
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n) || n < 1) return null;
+  return n;
+}
+
+function wantsDifferentSlots(body: string): boolean {
+  const lower = body.toLowerCase();
+  return (
+    lower.includes('different slot') ||
+    lower.includes('another slot') ||
+    lower.includes('other slot') ||
+    lower.includes('different time')
+  );
+}
 
 export async function processIncomingEmail(email: ParsedEmail) {
-  // Use threadId (In-Reply-To / References) if present, otherwise fall back to messageId
-  const emailThreadId = email.threadId ?? email.messageId;
+  const threadIds = (email.threadId ?? '')
+    .split(/\s+/)
+    .map((id) => id.trim())
+    .filter((id) => id.length > 0);
+
+  const mainThreadId = threadIds[0] ?? email.messageId;
 
   const intent = await classifyEmailIntent(email.bodyText);
+  const requestedSlotNumber = parseRequestedSlotNumber(email.bodyText);
+  const isExplicitConfirm = requestedSlotNumber !== null;
+  const fromEmail = extractEmail(email.from);
+  const toEmails = email.to.map(extractEmail);
+  const ccEmails = email.cc.map(extractEmail);
+  const participantEmails = Array.from(new Set([fromEmail, ...toEmails, ...ccEmails]));
 
-  if (intent === 'confirm_slot') {
-    // Find existing thread.
-    const existingForConfirm = await prisma.thread.findFirst({
-      where: { email_thread_id: emailThreadId },
+  if (intent === 'confirm_slot' || isExplicitConfirm) {
+    let existingForConfirm = await prisma.thread.findFirst({
+      where: {
+        email_thread_id: { in: [...threadIds, email.messageId] } as any,
+      },
     });
+
+    if (!existingForConfirm) {
+      existingForConfirm = await prisma.thread.findFirst({
+        where: {
+          status: 'SLOTS_PROPOSED',
+          organizer_email: { in: participantEmails } as any,
+          guest_email: { in: participantEmails } as any,
+        },
+        orderBy: { created_at: 'desc' },
+      });
+    }
     if (!existingForConfirm) {
       return null;
     }
+    const existing = existingForConfirm as Thread;
 
-    // Very simple matching: pick the earliest pending slot.
     const pendingSlots = await prisma.proposedSlot.findMany({
       where: {
-        thread_id: existingForConfirm.id,
+        thread_id: existing.id,
         status: 'PENDING',
       },
       orderBy: { start_time: 'asc' },
     });
 
-    const selected = pendingSlots[0];
+    const selected =
+      (requestedSlotNumber ? pendingSlots[requestedSlotNumber - 1] : pendingSlots[0]) as
+        | ProposedSlot
+        | undefined;
     if (!selected) {
-      return existingForConfirm;
+      return existing;
     }
 
     const event = await createCalendarEvent({
-      recruiterEmail: existingForConfirm.organizer_email,
-      guestEmail: existingForConfirm.guest_email,
+      recruiterEmail: existing.organizer_email,
+      guestEmail: existing.guest_email,
       start: selected.start_time,
       end: selected.end_time,
       subject: email.subject,
@@ -44,7 +106,7 @@ export async function processIncomingEmail(email: ParsedEmail) {
 
     await prisma.meeting.create({
       data: {
-        thread_id: existingForConfirm.id,
+        thread_id: existing.id,
         calendar_event_id: event.calendarEventId,
         scheduled_time: selected.start_time,
         status: 'SCHEDULED',
@@ -57,67 +119,83 @@ export async function processIncomingEmail(email: ParsedEmail) {
     });
 
     await prisma.thread.update({
-      where: { id: existingForConfirm.id },
+      where: { id: existing.id },
       data: { status: 'MEETING_SCHEDULED' },
     });
 
     await sendEmail({
       original: email,
-      to: [existingForConfirm.guest_email],
-      cc: [existingForConfirm.organizer_email],
-      subject: `Interview confirmed – ${selected.start_time.toISOString()}`,
+      to: [existing.guest_email],
+      cc: [existing.organizer_email],
+      subject: `Interview confirmed – ${formatSlot(selected.start_time)}`,
       body:
         'Your interview has been scheduled.\n\n' +
-        `Start: ${selected.start_time.toISOString()}\n` +
-        `End: ${selected.end_time.toISOString()}\n`,
+        `Date: ${formatSlot(selected.start_time)}\n` +
+        `Duration: 1 hour\n`,
     });
 
-    return existingForConfirm;
-  }
-
-  const existing = await prisma.thread.findFirst({
-    where: { email_thread_id: emailThreadId },
-  });
-
-  if (existing) {
     return existing;
   }
 
-  // For now, assume the first address in "to" is the recruiter/organizer
-  const organizerEmail = email.to[0] ?? '';
-  const guestEmail = email.from;
+  const existingByThreadId = await prisma.thread.findFirst({
+    where: {
+      email_thread_id: { in: [...threadIds, email.messageId] } as any,
+    },
+  });
+
+  if (existingByThreadId) {
+    if (existingByThreadId.status === 'SLOTS_PROPOSED' && wantsDifferentSlots(email.bodyText)) {
+      const freshSlots = await getAvailableSlots(existingByThreadId.organizer_email, { days: 5 });
+      const freshSlotData = freshSlots.map((slot) => ({
+        thread_id: existingByThreadId.id,
+        start_time: new Date(slot.start),
+        end_time: new Date(slot.end),
+        status: 'PENDING' as const,
+      }));
+      await prisma.proposedSlot.createMany({ data: freshSlotData });
+      const slotsText = freshSlotData
+        .map(
+          (slot, index) =>
+            `${index + 1}. ${formatSlot(slot.start_time)} – ${formatSlot(slot.end_time)}`,
+        )
+        .join('\n');
+
+      await sendEmail({
+        original: email,
+        to: [existingByThreadId.guest_email],
+        cc: [existingByThreadId.organizer_email],
+        subject: `Re: ${email.subject}`,
+        body:
+          'No problem — here are 3 different 1-hour options:\n\n' +
+          `${slotsText}\n\n` +
+          'Reply with "confirm [slot number]" (e.g., "confirm 2").',
+      });
+    }
+    return existingByThreadId;
+  }
+
+  const organizerEmail = fromEmail;
+  const candidateTargets = [...toEmails, ...ccEmails].filter(
+    (addr) => addr && addr !== ASSISTANT_EMAIL && addr !== organizerEmail,
+  );
+  const guestEmail = candidateTargets[0] ?? '';
 
   const thread = await prisma.thread.create({
     data: {
-      email_thread_id: emailThreadId,
+      email_thread_id: mainThreadId,
       organizer_email: organizerEmail,
       guest_email: guestEmail,
       status: 'NEW_THREAD',
     },
-  });
+  }) as Thread;
 
-  const now = new Date();
-  const baseDay = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate() + 1,
-    10,
-    0,
-    0,
-  );
-
-  const slotData = Array.from({ length: 3 }).map((_, index) => {
-    const start = new Date(baseDay);
-    start.setDate(baseDay.getDate() + index);
-    const end = new Date(start);
-    end.setHours(end.getHours() + 1);
-    return {
-      thread_id: thread.id,
-      start_time: start,
-      end_time: end,
-      status: 'PENDING' as const,
-    };
-  });
+  const slotsFromCalendar = await getAvailableSlots(organizerEmail, { days: 5 });
+  const slotData = slotsFromCalendar.map((slot) => ({
+    thread_id: thread.id,
+    start_time: new Date(slot.start),
+    end_time: new Date(slot.end),
+    status: 'PENDING' as const,
+  }));
 
   await prisma.proposedSlot.createMany({ data: slotData });
   await prisma.thread.update({
@@ -128,7 +206,7 @@ export async function processIncomingEmail(email: ParsedEmail) {
   const slotsText = slotData
     .map(
       (slot, index) =>
-        `${index + 1}. ${slot.start_time.toISOString()} – ${slot.end_time.toISOString()}`,
+        `${index + 1}. ${formatSlot(slot.start_time)} – ${formatSlot(slot.end_time)}`,
     )
     .join('\n');
 
@@ -141,7 +219,7 @@ export async function processIncomingEmail(email: ParsedEmail) {
       'Thanks for your interest in interviewing.\n\n' +
       'Here are some available 1-hour slots:\n' +
       `${slotsText}\n\n` +
-      'Please reply with your preferred option.',
+      'Please reply with "confirm [slot number]" (e.g., "confirm 1") to book your preferred option.',
   });
 
   return thread;

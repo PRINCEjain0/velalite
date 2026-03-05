@@ -1,4 +1,5 @@
 import type { ParsedEmail } from '@/types/email';
+import { randomUUID } from 'crypto';
 
 // Minimal shape of the SendGrid Inbound Parse payload we care about.
 export type InboundPayload = {
@@ -13,11 +14,16 @@ export type InboundPayload = {
   'References'?: string;
 };
 
+function extractEmail(address: string): string {
+  const match = address.match(/<([^>]+)>/);
+  return match ? match[1] : address.trim();
+}
+
 function parseAddressList(value: string | undefined): string[] {
   if (!value) return [];
   return value
     .split(',')
-    .map((part) => part.trim())
+    .map((part) => extractEmail(part))
     .filter((part) => part.length > 0);
 }
 
@@ -37,17 +43,24 @@ function parseHeaders(raw?: string): Record<string, string> {
 export function parseInboundEmail(payload: InboundPayload): ParsedEmail {
   const headers = parseHeaders(payload.headers);
 
-  const messageId =
+  const messageIdRaw =
     payload['Message-Id'] ||
     headers['Message-Id'] ||
     headers['Message-ID'] ||
     '';
+  // Curl/manual tests may omit Message-Id; real providers (SendGrid/Gmail) include it.
+  const messageId =
+    messageIdRaw && messageIdRaw.trim().length > 0
+      ? messageIdRaw
+      : `<local-${randomUUID()}@velalite.local>`;
 
-  const threadId =
+  const threadIdRaw =
     payload['In-Reply-To'] ||
     headers['In-Reply-To'] ||
     headers['References'] ||
-    undefined;
+    '';
+
+  const threadId = threadIdRaw.trim().length > 0 ? threadIdRaw : undefined;
 
   return {
     messageId,

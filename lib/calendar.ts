@@ -1,4 +1,8 @@
-type CreateEventParams = {
+import {
+  createCalendarEvent as createGoogleEvent,
+} from '@/lib/google-calendar';
+
+type CreateEventParamsLegacy = {
   recruiterEmail: string;
   guestEmail: string;
   start: Date;
@@ -6,23 +10,14 @@ type CreateEventParams = {
   subject: string;
 };
 
-
-export async function createCalendarEvent({
-  recruiterEmail,
-  guestEmail,
-  start,
-  end,
-  subject,
-}: CreateEventParams): Promise<{ calendarEventId: string }> {
-  const id = `fake-event-${Date.now()}`;
-  console.log('Creating calendar event (placeholder)', {
-    id,
-    recruiterEmail,
-    guestEmail,
-    start,
-    end,
-    subject,
+export async function createCalendarEvent(params: CreateEventParamsLegacy): Promise<{
+  calendarEventId: string;
+}> {
+  return createGoogleEvent({
+    calendarId: params.recruiterEmail,
+    guestEmail: params.guestEmail,
+    start: params.start,
+    end: params.end,
+    summary: params.subject,
   });
-  return { calendarEventId: id };
 }
-

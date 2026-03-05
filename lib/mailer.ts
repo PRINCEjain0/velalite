@@ -1,7 +1,9 @@
 import type { ParsedEmail } from '@/types/email';
 
-const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
-const ASSISTANT_EMAIL = process.env.ASSISTANT_EMAIL ?? 'agent@velalite.app';
+import { sendViaGmail } from '@/lib/gmail-send';
+import { getAssistantEmail } from '@/lib/gmail-client';
+
+const ASSISTANT_EMAIL = getAssistantEmail() ?? 'agent@velalite.app';
 
 type SendParams = {
   original: ParsedEmail;
@@ -19,30 +21,26 @@ export async function sendEmail({
   subject,
   body,
 }: SendParams) {
-  if (!SENDGRID_API_KEY) {
+  const result = await sendViaGmail({
+    to,
+    cc,
+    subject,
+    body,
+    headers: {
+      'In-Reply-To': original.messageId,
+      References: original.threadId ?? original.messageId,
+    },
+  });
+
+  if (!result.ok) {
     console.log('sendEmail (dry-run)', {
       from: ASSISTANT_EMAIL,
       to,
       cc,
       subject,
       body,
+      reason: result.reason,
     });
-    return;
   }
-
-  const sgMail = await import('@sendgrid/mail');
-  sgMail.default.setApiKey(SENDGRID_API_KEY);
-
-  await sgMail.default.send({
-    from: ASSISTANT_EMAIL,
-    to,
-    cc,
-    subject,
-    text: body,
-    headers: {
-      'In-Reply-To': original.messageId,
-      References: original.threadId ?? original.messageId,
-    },
-  } as any);
 }
 
