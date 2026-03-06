@@ -11,7 +11,8 @@ export async function getRecruiterCalendarClient(recruiterEmail: string) {
     return null;
   }
 
-  const recruiter = await prisma.recruiter.findUnique({
+  
+  const recruiter = await (prisma as any).recruiter.findUnique({
     where: { email: recruiterEmail.toLowerCase() },
   });
   if (!recruiter) return null;

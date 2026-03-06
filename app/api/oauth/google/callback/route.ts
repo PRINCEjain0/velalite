@@ -48,7 +48,8 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    const recruiter = await prisma.recruiter.upsert({
+  
+    const recruiter = await (prisma as any).recruiter.upsert({
       where: { email },
       update: {
         googleRefreshToken: tokens.refresh_token,
