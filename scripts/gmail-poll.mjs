@@ -1,5 +1,5 @@
 const POLL_URL = process.env.GMAIL_POLL_URL ?? 'http://localhost:3000/api/gmail/poll';
-const INTERVAL_MS = Number(process.env.GMAIL_POLL_INTERVAL_MS ?? '30000');
+const INTERVAL_MS = Number(process.env.GMAIL_POLL_INTERVAL_MS ?? '10000');
 
 if (!Number.isFinite(INTERVAL_MS) || INTERVAL_MS < 5000) {
   console.error('GMAIL_POLL_INTERVAL_MS must be >= 5000');

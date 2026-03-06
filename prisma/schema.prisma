@@ -37,6 +37,14 @@ model Meeting {
   status            MeetingStatus @default(SCHEDULED)
 }
 
+model Recruiter {
+  id                 String   @id @default(cuid())
+  email              String   @unique
+  googleRefreshToken String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
 enum ThreadStatus {
   NEW_THREAD
   SLOTS_PROPOSED

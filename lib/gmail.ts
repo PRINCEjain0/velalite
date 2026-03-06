@@ -85,11 +85,13 @@ export async function processUnreadAgentInbox() {
   });
 
   const messages = res.data.messages ?? [];
+  const foundCount = messages.length;
   if (messages.length === 0) {
-    return { ok: true, processedCount: 0 };
+    return { ok: true, processedCount: 0, foundCount, errorCount: 0 };
   }
 
   let processedCount = 0;
+  let errorCount = 0;
 
   for (const msg of messages) {
     if (!msg.id) continue;
@@ -113,10 +115,11 @@ export async function processUnreadAgentInbox() {
         },
       });
     } catch (err) {
+      errorCount += 1;
       console.error('Error processing Gmail message', msg.id, err);
     }
   }
 
-  return { ok: true, processedCount };
+  return { ok: true, processedCount, foundCount, errorCount };
 }
 

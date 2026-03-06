@@ -1,10 +1,11 @@
 import { prisma } from '@/lib/prisma';
 import type { ParsedEmail } from '@/types/email';
 import type { Thread, ProposedSlot, Meeting } from '@prisma/client';
-import { classifyEmailIntent } from '@/lib/ai';
+import { chooseProposedSlotIndex, classifyEmailIntent } from '@/lib/ai';
 import { cancelCalendarEvent, createCalendarEvent } from '@/lib/calendar';
 import { getAvailableSlots } from '@/lib/google-calendar';
 import { sendEmail } from '@/lib/mailer';
+import { getRecruiterCalendarClient } from '@/lib/recruiter-calendar';
 
 const ASSISTANT_EMAIL = (process.env.ASSISTANT_EMAIL ?? '').toLowerCase();
 
@@ -24,12 +25,69 @@ function formatSlot(date: Date): string {
   });
 }
 
+function formatSlotLine(start: Date, end: Date): string {
+  const timeZone = process.env.VELALITE_TIME_ZONE ?? 'Asia/Kolkata';
+  const tzLabel =
+    timeZone === 'Asia/Kolkata' ? 'IST' : timeZone === 'America/Los_Angeles' ? 'PT' : timeZone;
+
+  const day = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+  }).format(start);
+
+  const startRaw = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(start);
+  const startTime = startRaw.replace(/\s?(AM|PM)$/i, '').trim();
+
+  const endTime = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(end);
+
+  return `${day} · ${startTime}-${endTime} ${tzLabel}`;
+}
+
 function parseRequestedSlotNumber(body: string): number | null {
-  const m = body.match(/\b(?:confirm|book|choose|pick)\s*(?:slot\s*)?(\d+)\b/i) ?? body.match(/\bslot\s*(\d+)\b/i);
+  const text = body.trim();
+
+  const m =
+    // "book slot 2", "confirm 2", "choose option 3"
+    text.match(
+      /\b(?:confirm|book|choose|pick)\b[\s:,-]*(?:(?:slot|option)\b[\s#:-]*)?(\d+)\b/i,
+    ) ??
+    // "slot 2", "option #2"
+    text.match(/\b(?:slot|option)\b[\s#:-]*(\d+)\b/i) ??
+    // reply is just "2"
+    text.match(/^\s*(\d+)\s*$/);
+
   if (!m) return null;
   const n = Number(m[1]);
   if (!Number.isFinite(n) || n < 1) return null;
   return n;
+}
+
+function parseOrdinalSlotNumber(body: string): number | null {
+  const lower = body.toLowerCase();
+  if (/\b(1st|first)\b/.test(lower)) return 1;
+  if (/\b(2nd|second)\b/.test(lower)) return 2;
+  if (/\b(3rd|third)\b/.test(lower)) return 3;
+  return null;
+}
+
+function nameFromEmailAddress(email: string): string {
+  const local = email.split('@')[0] ?? 'there';
+  const withoutDigits = local.replace(/\d+/g, ' ');
+  const cleaned = withoutDigits.replace(/[._-]+/g, ' ').trim();
+  const first = cleaned.split(/\s+/)[0] ?? 'there';
+  return first.length > 0 ? first[0].toUpperCase() + first.slice(1) : 'there';
 }
 
 type AgentAction = 'confirm' | 'cancel' | 'schedule' | 'other';
@@ -91,7 +149,7 @@ export async function processIncomingEmail(email: ParsedEmail) {
 
   const latestBody = latestReplyOnly(email.bodyText);
   const intent = await classifyEmailIntent(latestBody);
-  const requestedSlotNumber = parseRequestedSlotNumber(latestBody);
+  const requestedSlotNumber = parseRequestedSlotNumber(latestBody) ?? parseOrdinalSlotNumber(latestBody);
   const action = deriveAction(latestBody, intent, requestedSlotNumber !== null);
   const fromEmail = extractEmail(email.from);
   const toEmails = email.to.map(extractEmail);
@@ -168,6 +226,14 @@ export async function processIncomingEmail(email: ParsedEmail) {
   }
 
   if (action === 'confirm') {
+    console.log('confirm: parsed slot request', {
+      fromEmail,
+      requestedSlotNumber,
+      intent,
+      subject: email.subject,
+      latestBody: latestBody.slice(0, 200),
+    });
+
     let existingForConfirm = await prisma.thread.findFirst({
       where: {
         email_thread_id: { in: [...threadIds, email.messageId] } as any,
@@ -230,10 +296,7 @@ export async function processIncomingEmail(email: ParsedEmail) {
 
     if (requestedSlotNumber && requestedSlotNumber > pendingSlots.length) {
       const pendingText = pendingSlots
-        .map(
-          (slot, index) =>
-            `${index + 1}. ${formatSlot(slot.start_time)} – ${formatSlot(slot.end_time)}`,
-        )
+        .map((slot) => `- ${formatSlotLine(slot.start_time, slot.end_time)}`)
         .join('\n');
 
       await sendEmail({
@@ -242,18 +305,49 @@ export async function processIncomingEmail(email: ParsedEmail) {
         cc: [existing.organizer_email],
         subject: `Re: ${email.subject}`,
         body:
-          `I couldn't find slot ${requestedSlotNumber}.\n\n` +
-          'Please choose one of the currently available slots:\n' +
+          `I couldn't match that to one of the options.\n\n` +
+          'Here are the current slots again:\n' +
           `${pendingText}\n\n` +
-          'Reply with "confirm [slot number]" (e.g., "confirm 1").',
+          'Just reply with the time that works best for you (for example: "Tue 10am works").',
+      });
+      return existing;
+    }
+
+    let chosenIndex = requestedSlotNumber;
+    if (!chosenIndex) {
+      const slotsForAi = pendingSlots.slice(0, 3).map((s, i) => ({
+        index: i + 1,
+        label: formatSlotLine(s.start_time, s.end_time),
+        startIso: s.start_time.toISOString(),
+        endIso: s.end_time.toISOString(),
+      }));
+      const aiChoice = await chooseProposedSlotIndex({ body: latestBody, slots: slotsForAi });
+      if (aiChoice && aiChoice >= 1 && aiChoice <= pendingSlots.length) {
+        chosenIndex = aiChoice;
+      }
+    }
+
+    if (!chosenIndex) {
+      const pendingText = pendingSlots
+        .slice(0, 3)
+        .map((slot) => `- ${formatSlotLine(slot.start_time, slot.end_time)}`)
+        .join('\n');
+
+      await sendEmail({
+        original: email,
+        to: [existing.guest_email],
+        cc: [existing.organizer_email],
+        subject: `Re: ${email.subject}`,
+        body:
+          "Got it — which of the options should I book?\n\n" +
+          `${pendingText}\n\n` +
+          "Reply with the time you prefer (for example: \"Wed 2pm works\"), or share your availability and I’ll find another time.",
       });
       return existing;
     }
 
     const selected =
-      (requestedSlotNumber ? pendingSlots[requestedSlotNumber - 1] : pendingSlots[0]) as
-        | ProposedSlot
-        | undefined;
+      (chosenIndex ? pendingSlots[chosenIndex - 1] : pendingSlots[0]) as ProposedSlot | undefined;
     if (!selected) {
       return existing;
     }
@@ -285,17 +379,7 @@ export async function processIncomingEmail(email: ParsedEmail) {
       data: { status: 'MEETING_SCHEDULED' },
     });
 
-    await sendEmail({
-      original: email,
-      to: [existing.guest_email],
-      cc: [existing.organizer_email],
-      subject: `Interview confirmed - ${formatSlot(selected.start_time)}`,
-      body:
-        'Your interview has been scheduled.\n\n' +
-        `Date: ${formatSlot(selected.start_time)}\n` +
-        `Duration: 1 hour\n`,
-    });
-
+    // Rely on Google Calendar's own invite email/card.
     return existing;
   }
 
@@ -311,6 +395,8 @@ export async function processIncomingEmail(email: ParsedEmail) {
         existingByThreadId.status === 'SLOTS_PROPOSED') &&
       action === 'schedule'
     ) {
+      const recruiterCal = await getRecruiterCalendarClient(existingByThreadId.organizer_email);
+
       const existingSlots = await prisma.proposedSlot.findMany({
         where: { thread_id: existingByThreadId.id },
         orderBy: { start_time: 'asc' },
@@ -320,7 +406,7 @@ export async function processIncomingEmail(email: ParsedEmail) {
       const freshSlots = await getAvailableSlots(existingByThreadId.organizer_email, {
         days: 5,
         excludeStarts,
-      });
+      }, recruiterCal ?? undefined);
 
       const freshSlotData = freshSlots.map((slot) => ({
         thread_id: existingByThreadId.id,
@@ -334,10 +420,7 @@ export async function processIncomingEmail(email: ParsedEmail) {
         data: { status: 'SLOTS_PROPOSED' },
       });
       const slotsText = freshSlotData
-        .map(
-          (slot, index) =>
-            `${index + 1}. ${formatSlot(slot.start_time)} – ${formatSlot(slot.end_time)}`,
-        )
+        .map((slot) => `- ${formatSlotLine(slot.start_time, slot.end_time)}`)
         .join('\n');
 
       await sendEmail({
@@ -346,9 +429,10 @@ export async function processIncomingEmail(email: ParsedEmail) {
         cc: [existingByThreadId.organizer_email],
         subject: `Re: ${email.subject}`,
         body:
-          'Great — here are new available 1-hour slots:\n\n' +
+          `Hi ${nameFromEmailAddress(existingByThreadId.guest_email)},\n\n` +
+          "I'm coordinating your round with the team. Based on everyone's availability, here are 3 options:\n\n" +
           `${slotsText}\n\n` +
-          'Reply with "confirm [slot number]" (e.g., "confirm 1").',
+          "Which works best for you? If none of these work, just share your availability and I'll find another time.",
       });
       return existingByThreadId;
     }
@@ -361,7 +445,7 @@ export async function processIncomingEmail(email: ParsedEmail) {
         body:
           'I can help with:\n' +
           '- "schedule" or "reschedule" for new slots\n' +
-          '- "confirm 1" to book a slot\n' +
+          '- pick one of the proposed times (for example: "Tue 10am works")\n' +
           '- "cancel" to cancel the interview',
       });
     }
@@ -383,7 +467,12 @@ export async function processIncomingEmail(email: ParsedEmail) {
     },
   }) as Thread;
 
-  const slotsFromCalendar = await getAvailableSlots(organizerEmail, { days: 5 });
+  const recruiterCal = await getRecruiterCalendarClient(organizerEmail);
+  const slotsFromCalendar = await getAvailableSlots(
+    organizerEmail,
+    { days: 5 },
+    recruiterCal ?? undefined,
+  );
   const slotData = slotsFromCalendar.map((slot) => ({
     thread_id: thread.id,
     start_time: new Date(slot.start),
@@ -398,10 +487,7 @@ export async function processIncomingEmail(email: ParsedEmail) {
   });
 
   const slotsText = slotData
-    .map(
-      (slot, index) =>
-        `${index + 1}. ${formatSlot(slot.start_time)} – ${formatSlot(slot.end_time)}`,
-    )
+    .map((slot) => `- ${formatSlotLine(slot.start_time, slot.end_time)}`)
     .join('\n');
 
   await sendEmail({
@@ -410,10 +496,10 @@ export async function processIncomingEmail(email: ParsedEmail) {
     cc: [organizerEmail],
     subject: `Re: ${email.subject}`,
     body:
-      'Thanks for your interest in interviewing.\n\n' +
-      'Here are some available 1-hour slots:\n' +
+      `Hi ${nameFromEmailAddress(guestEmail)},\n\n` +
+      "I'm coordinating your round with the team. Based on everyone's availability, here are 3 options:\n\n" +
       `${slotsText}\n\n` +
-      'Please reply with "confirm [slot number]" (e.g., "confirm 1") to book your preferred option.',
+      "Which works best for you? If none of these work, just share your availability and I'll find another time.",
   });
 
   return thread;

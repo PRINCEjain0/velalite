@@ -19,15 +19,19 @@ export default function Home() {
         <section className="mt-8 rounded-xl border border-gray-200 bg-gray-50 px-5 py-4 text-sm text-gray-700">
           <p className="font-medium">Before you start</p>
           <p className="mt-2">
-            In your recruiter Google Calendar, share your main calendar with:
-          </p>
-          <p className="mt-2 font-mono text-xs">
-            velalite-calendar@velalite.iam.gserviceaccount.com
+            Connect your recruiter Google Calendar once so VelaLite can read your availability and create
+            interview events on your behalf.
           </p>
           <p className="mt-2">
-            Give it <span className="font-semibold">“Make changes to events”</span> access so VelaLite can
-            see your availability and create interview events.
+            After you connect, you don&apos;t need to touch settings again — everything else happens inside
+            the email thread.
           </p>
+          <a
+            href="/api/oauth/google/start"
+            className="mt-4 inline-flex items-center rounded-md bg-gray-900 px-4 py-2 text-sm font-medium text-white hover:bg-gray-800"
+          >
+            Connect Google Calendar
+          </a>
         </section>
 
         <div className="mt-12 space-y-12">

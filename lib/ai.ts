@@ -86,3 +86,60 @@ export async function classifyEmailIntent(body: string): Promise<EmailIntent> {
   }
 }
 
+export async function chooseProposedSlotIndex(args: {
+  body: string;
+  slots: { index: number; label: string; startIso: string; endIso: string }[];
+}): Promise<number | null> {
+  if (!GROQ_API_KEY) return null;
+
+  try {
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${GROQ_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'llama-3.1-8b-instant',
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are helping choose which proposed interview slot a candidate selected. ' +
+              'You must reply with ONLY valid JSON in one line like {"choice":2} or {"choice":null}. ' +
+              'If the candidate clearly selects one of the proposed options, set choice to that option number. ' +
+              'If the candidate does not pick a specific option, set choice to null.',
+          },
+          {
+            role: 'user',
+            content:
+              `Candidate reply:\n${args.body}\n\n` +
+              `Proposed slots:\n` +
+              args.slots.map((s) => `${s.index}. ${s.label} (start=${s.startIso}, end=${s.endIso})`).join('\n'),
+          },
+        ],
+        temperature: 0,
+        max_tokens: 50,
+      }),
+    });
+
+    if (!response.ok) {
+      console.error('Groq API error (choose slot)', await response.text());
+      return null;
+    }
+
+    const json: any = await response.json();
+    const content: string = json.choices?.[0]?.message?.content ?? '';
+    const text = content.trim();
+    const parsed = JSON.parse(text) as { choice?: unknown };
+    const choice = parsed?.choice;
+    if (choice === null) return null;
+    const n = typeof choice === 'number' ? choice : Number(choice);
+    if (!Number.isFinite(n)) return null;
+    return Math.trunc(n);
+  } catch (error) {
+    console.error('Error calling Groq API (choose slot)', error);
+    return null;
+  }
+}
+

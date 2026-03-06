@@ -24,24 +24,17 @@ The recruiter does not need to manually manage scheduling messages after that.
 
 The agent will communicate with the candidate and keep the recruiter in CC.
 
-### 2. Share your Google Calendar with VelaLite
+### 2. Connect your Google Calendar once
 
-VelaLite needs access to the recruiter's calendar to check availability and create interview events.
+VelaLite uses OAuth to access the recruiter's calendar securely.
 
-1. Open Google Calendar.
-2. Open the settings for your main calendar.
-3. Find **Share with specific people**.
-4. Add the service account email:
+On the VelaLite landing page, click the **“Connect Google Calendar”** button. When you click it:
 
-```
-velalite-calendar@velalite.iam.gserviceaccount.com
-```
+1. Google will ask which account to use (choose your recruiter Gmail).
+2. You grant access to calendar availability and events.
+3. VelaLite stores a token so it can read your free/busy times and create interview events on your behalf.
 
-5. Permission must be:
-
-**Make changes to events**
-
-Once shared, the agent can read availability and schedule meetings automatically.
+You only need to do this once per recruiter account.
 
 ### 3. How the agent understands candidate replies
 
@@ -72,9 +65,8 @@ All communication continues within the same email thread.
 
 ## Known Limitation
 
-When using personal Gmail accounts with service accounts, Google may restrict sending attendee invitations automatically.
-
-In this case VelaLite still creates or cancels the event on the recruiter's calendar and sends email confirmations to participants.
+- With OAuth connected, VelaLite creates events directly on the recruiter&apos;s calendar and Google Calendar sends the official invite card to the candidate.
+- If a recruiter has **not** connected their calendar, the system falls back to a shared service-account calendar and sends plain-text confirmation emails instead of Google invite cards.
 
 ## Local Setup 
 

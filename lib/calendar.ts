@@ -2,6 +2,7 @@ import {
   createCalendarEvent as createGoogleEvent,
   cancelCalendarEvent as cancelGoogleEvent,
 } from '@/lib/google-calendar';
+import { getRecruiterCalendarClient } from '@/lib/recruiter-calendar';
 
 type CreateEventParamsLegacy = {
   recruiterEmail: string;
@@ -13,14 +14,22 @@ type CreateEventParamsLegacy = {
 
 export async function createCalendarEvent(params: CreateEventParamsLegacy): Promise<{
   calendarEventId: string;
+  invited: boolean;
+  hangoutLink: string | null;
+  htmlLink: string | null;
 }> {
-  return createGoogleEvent({
-    calendarId: params.recruiterEmail,
-    guestEmail: params.guestEmail,
-    start: params.start,
-    end: params.end,
-    summary: params.subject,
-  });
+  const recruiterCal = await getRecruiterCalendarClient(params.recruiterEmail);
+
+  return createGoogleEvent(
+    {
+      calendarId: params.recruiterEmail,
+      guestEmail: params.guestEmail,
+      start: params.start,
+      end: params.end,
+      summary: params.subject,
+    },
+    recruiterCal ?? undefined,
+  );
 }
 
 type CancelEventParamsLegacy = {
@@ -29,8 +38,13 @@ type CancelEventParamsLegacy = {
 };
 
 export async function cancelCalendarEvent(params: CancelEventParamsLegacy): Promise<void> {
-  await cancelGoogleEvent({
-    calendarId: params.recruiterEmail,
-    calendarEventId: params.calendarEventId,
-  });
+  const recruiterCal = await getRecruiterCalendarClient(params.recruiterEmail);
+
+  await cancelGoogleEvent(
+    {
+      calendarId: params.recruiterEmail,
+      calendarEventId: params.calendarEventId,
+    },
+    recruiterCal ?? undefined,
+  );
 }
